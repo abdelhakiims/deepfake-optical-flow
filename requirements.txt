@@ -1,0 +1,9 @@
+# PyTorch and torchvision: install the build that matches your GPU first, e.g. (CUDA 12.6)
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+# (see https://pytorch.org/get-started/locally/). Then:
+numpy
+scipy                # used by the RAFT code
+scikit-learn>=1.0
+opencv-python>=4.8   # video reading and the YuNet face detector
+streamlit            # only for app.py
+pytest               # only for the tests
