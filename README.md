@@ -1,23 +1,77 @@
 # Deepfake video detection with motion-compensated optical flow
 
-A deepfake video detector that looks at **how a face moves**, not only at how it looks. The head's
-rigid motion is removed from the optical flow, so that what remains is the motion *inside* the face,
-where face swaps leave inconsistencies. A two-stream network (optical flow + face image, ResNet18
-each) reads short clips of consecutive frames, and an LSTM combines them over time.
+A research project on one question: **does the motion of a face reveal deepfakes, and how much of the
+head's own motion should be removed before looking for it?** A face swap is like a mask pasted on a
+real head. When the head moves, the mask can slip or flicker very slightly. Those slips are tiny,
+however, compared with the large motion of the head itself. This project measures that motion with
+optical flow (RAFT), removes the rigid motion of the head in three different ways, and tests which
+version generalises best to datasets never seen in training.
 
-```
-video -> face tracking -> clips of 21 consecutive face crops -> RAFT optical flow
-      -> head-motion removal (affine fit per flow map)
-      -> [ResNet18 on flow | ResNet18 on face image] per frame -> LSTM -> real / fake
-```
+**Full documentation:** every design decision, experiment, result, problem and limitation is in
+**[EXPERIMENTS.md](EXPERIMENTS.md)** (French: [EXPERIMENTS_fr.md](EXPERIMENTS_fr.md)). The same document is
+available as PDF and Word:
+[English PDF](docs/Design%20and%20experiment%20log.pdf) ·
+[French PDF](docs/Journal%20de%20conception%20et%20d%27exp%C3%A9riences.pdf) ·
+[English Word](docs/Design%20and%20experiment%20log.docx) ·
+[French Word](docs/Journal%20de%20conception%20et%20d%27exp%C3%A9riences.docx).
 
-Everything that was tested, every design decision and its reason, every result (good and bad), and
-the problems met along the way are documented in **[EXPERIMENTS.md](EXPERIMENTS.md)** (French version:
-[EXPERIMENTS_fr.md](EXPERIMENTS_fr.md); Word and PDF versions of both in `docs/`).
+## Main findings
 
-## Results so far
+1. **Removing only the head's translation generalises best.** Trained on FaceForensics++ and tested
+   on unseen datasets, subtracting the mean displacement of each flow map gives a video AUC of
+   **0.870 on DFD** and **0.739 on Celeb-DF**. A full affine fit gives 0.820 and 0.719, and no removal
+   0.824 and 0.687. On DFD, the 95% intervals of the mean and affine versions do not overlap. This is
+   the opposite of what was expected, and the main result of the ablations.
+2. **Optical flow alone learns the training dataset, not deepfakes in general.** It scores 0.980 on
+   FaceForensics++, including 1.000 on FaceSwap fakes, but only 0.681 on DFD and 0.596 on Celeb-DF.
+3. **Scores on the training dataset do not predict generalisation.** The versions that fit
+   FaceForensics++ best are not the best on unseen data.
+4. **Within one dataset the task is easy; across datasets it is not.** Trained on DFD, the model reaches
+   0.972 ± 0.017 on unseen actors (7-fold cross-validation), but 0.781 ± 0.032 on Celeb-DF.
+5. **Honest position:** on Celeb-DF these results remain below the best published detectors (0.80–0.91),
+   and each FaceForensics++ version was trained with one seed only. See
+   [limitations](EXPERIMENTS.md#18-limitations-and-threats-to-validity).
 
-Video-level AUC. "Unseen" = a dataset never used in training.
+![Ablations on FaceForensics++](docs/figures/ffpp_ablations.png)
+
+## Method
+
+![Pipeline](docs/figures/pipeline.png)
+
+1. **Face tracking.** YuNet detects faces about 8 times per second. Detections are linked into one
+   track per person, and the main subject is the person who faces the camera the most. Frames with a
+   second frontal face of similar size are excluded, because the label cannot say which face is fake
+   ([§3](EXPERIMENTS.md#3-preprocessing-decisions-and-reasons)).
+2. **Clips.** Up to 6 non-overlapping clips of 21 *consecutive* frames per video, cropped around the
+   tracked face (256 × 256, margin × 1.3, smoothed box).
+3. **Optical flow.** RAFT (Sintel weights, 32 iterations) gives 20 flow maps per clip, stored at
+   128 × 128 ([§4](EXPERIMENTS.md#4-raft-optical-flow-what-changed-and-why)).
+4. **Head-motion removal.** Each flow map has the head's rigid motion subtracted: nothing (`none`),
+   the mean translation (`mean`), or a least-squares affine fit `dx ≈ a·x + b·y + c`, `dy ≈ d·x + e·y + f`
+   (`affine`). Flow maps are then divided by one scale for the whole dataset
+   ([§5](EXPERIMENTS.md#5-removing-the-heads-motion-from-the-flow)).
+5. **Network.** At each of the 20 steps, one ResNet18 reads the flow map and another reads the face
+   image. Their features are joined, a 2-layer LSTM reads the 20 steps, and the clip is classified as
+   real or fake. A video's score is the mean of its clips' scores
+   ([§6](EXPERIMENTS.md#6-the-network-resnet18-and-lstm-changes-and-why)).
+
+![Head-motion removal](docs/figures/head_motion_removal.png)
+
+## Evaluation protocol
+
+- **No identity on both sides of a split**, checked in code on every run. DFD is split by actor
+  (7-fold `StratifiedGroupKFold`), FaceForensics++ uses its official 720/140/140 split, and Celeb-DF
+  its official 518-video test list.
+- **Videos are split, never clips.** Model selection (video AUC) and the decision threshold (Youden's
+  J) use validation videos only.
+- **Cross-dataset tests use the trained model unchanged.** Results are reported as video-level AUC
+  with 95% bootstrap intervals ([§8](EXPERIMENTS.md#8-evaluation-protocol)).
+- **Ablations change one thing at a time:** images only, flow only, the three head-motion settings,
+  and mean over time instead of the LSTM.
+
+## Results
+
+Video-level AUC. "Unseen" means a dataset never used in training.
 
 | Trained on | Tested on | AUC | 95% interval |
 |---|---|---|---|
@@ -26,13 +80,33 @@ Video-level AUC. "Unseen" = a dataset never used in training.
 | FaceForensics++ (official split) | FaceForensics++ test | 0.967 | 0.955–0.977 |
 | FaceForensics++ | DFD (unseen) | 0.820 | 0.799–0.842 |
 | FaceForensics++ | Celeb-DF (unseen) | 0.719 | 0.672–0.764 |
-| FaceForensics++, mean motion removal | DFD / Celeb-DF (unseen) | 0.870 / 0.739 | 0.850–0.891 / 0.691–0.786 |
+| FaceForensics++, mean motion removal | DFD / Celeb-DF (unseen) | **0.870 / 0.739** | 0.850–0.891 / 0.691–0.786 |
 
-On unseen datasets this is currently below published detectors (about 0.80–0.91 on Celeb-DF when
-trained on FaceForensics++). The ablations show that removing only the mean displacement of the head
-generalises better than the full affine removal, and that optical flow alone hardly transfers across
-datasets; see EXPERIMENTS.md, section 10, for all six versions, the comparison with published methods
-and the likely reasons. Each version was trained once (one seed).
+All six versions on FaceForensics++ (video AUC):
+
+| Version | FF++ test | DFD (unseen) | Celeb-DF (unseen) |
+|---|---|---|---|
+| Full model (affine removal, LSTM) | 0.967 | 0.820 | 0.719 |
+| Images only | 0.939 | 0.798 | 0.738 |
+| Flow only | 0.980 | 0.681 | 0.596 |
+| No head-motion removal | 0.971 | 0.824 | 0.687 |
+| **Mean motion removal** | 0.957 | **0.870** | 0.739 |
+| Mean over time (no LSTM) | 0.986 | 0.790 | 0.748 |
+
+Further results in the documentation:
+- [per manipulation method](EXPERIMENTS.md#106-results-per-manipulation-method-faceforensics-test): NeuralTextures is
+  the hardest method for every version;
+- [the two kinds of Celeb-DF real videos](EXPERIMENTS.md#107-celeb-df-the-two-kinds-of-real-videos);
+- [training curves](EXPERIMENTS.md#108-training-curves-and-computing-cost);
+- [comparison with published methods](EXPERIMENTS.md#104-trained-on-faceforensics-full-model);
+- [related work](EXPERIMENTS.md#17-related-work-and-positioning).
+
+## What changed compared with the first version
+
+An earlier prototype of this detector used overlapping windows split at random, so the same frames,
+and the same people, were in training and test. It also fed RAFT images in the wrong value range,
+used whole frames instead of the face, and skipped frames. The 11 problems found, and how each was
+fixed, are listed in [§2](EXPERIMENTS.md#2-the-first-version-and-what-was-wrong-with-it).
 
 ## Repository layout
 
@@ -134,15 +208,6 @@ python -m deepfake_flow.experiments preprocess-dfd preprocess-celebdf preprocess
 python -m deepfake_flow.experiments dfd-cv dfd-to-celebdf ffpp summary \
     --flows_dir <flows> --celebdf_dir <Celeb-DF-v2>
 ```
-
-## Evaluation rules
-
-- Videos are split, never clips; no identity appears in two parts of a split (checked in code).
-- DFD: 7-fold cross-validation grouped by actor. FaceForensics++: official split. Celeb-DF: official
-  test list.
-- Model selection and the decision threshold use validation videos only.
-- Reported: AUC (with a 95% bootstrap interval), accuracy, balanced accuracy, false-alarm rate, at
-  clip and video level. Cross-dataset results are compared by AUC.
 
 ## Third-party components
 
