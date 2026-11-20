@@ -15,6 +15,9 @@ available as PDF and Word:
 [English Word](docs/Design%20and%20experiment%20log.docx) ·
 [French Word](docs/Journal%20de%20conception%20et%20d%27exp%C3%A9riences.docx).
 
+**Author:** Abdelhakim Azzouz · abdelhakimazzouz@yahoo.com ·
+[how this project started](#author-and-context)
+
 ## Main findings
 
 1. **Removing only the head's translation generalises best.** Trained on FaceForensics++ and tested
@@ -208,6 +211,18 @@ python -m deepfake_flow.experiments preprocess-dfd preprocess-celebdf preprocess
 python -m deepfake_flow.experiments dfd-cv dfd-to-celebdf ffpp summary \
     --flows_dir <flows> --celebdf_dir <Celeb-DF-v2>
 ```
+
+## Author and context
+
+This project grew out of my master's thesis in Artificial Intelligence at the University of Science
+and Technology of Oran Mohamed Boudiaf (USTO-MB), Algeria, carried out at the SIMPA Laboratory under
+the supervision of Prof. Nacera Benamrane, with Mohamed Menhour (defended in June 2025, grade
+19.50/20). The thesis version is the first version described in
+[§2](EXPERIMENTS.md#2-the-first-version-and-what-was-wrong-with-it). After the defence I reviewed it,
+found that its split leaked frames and identities between training and test, and rebuilt the
+pipeline and the evaluation; every result in this README comes from the rebuilt version.
+
+Contact: Abdelhakim Azzouz, abdelhakimazzouz@yahoo.com.
 
 ## Third-party components
 
